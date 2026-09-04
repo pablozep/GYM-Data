@@ -170,6 +170,30 @@ const COLOR = { "Pecho":"#f43f5e","Espalda":"#10b981","Hombros":"#f59e0b","Bíce
   "Tríceps":"#a78bfa","Piernas":"#fb923c","Glúteos":"#ec4899","Core":"#2dd4bf",
   "Cardio":"#a3e635","Full Body":"#818cf8" };
 
+/* Miniatura que crece al tocarla y vuelve a su tamaño al tocar fuera.
+   La imagen ampliada flota sobre el contenido: no empuja la lista. */
+function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150 }) {
+  const [abierto, setAbierto] = useState(false);
+  const [falla, setFalla] = useState(false);
+
+  if (!url || falla) return <Avatar nombre={nombre} musculo={musculo} size={size}/>;
+
+  return (
+    <React.Fragment>
+      {abierto && <div style={{position:"fixed", inset:0, zIndex:44}} onClick={() => setAbierto(false)}/>}
+      <div style={{position:"relative", width:size, height:size, flex:"0 0 auto", zIndex: abierto ? 45 : 1}}>
+        <img src={url} alt={nombre} loading="lazy" onError={() => setFalla(true)}
+          onClick={() => setAbierto(a => !a)}
+          style={{ position:"absolute", top:0, left:0,
+                   width: abierto ? zoom : size, height: abierto ? zoom : size,
+                   borderRadius:12, objectFit:"cover", background:"#fff", cursor:"pointer",
+                   transition:"width .18s ease, height .18s ease",
+                   boxShadow: abierto ? "0 12px 34px rgba(0,0,0,.65)" : "none" }}/>
+      </div>
+    </React.Fragment>
+  );
+}
+
 /* --- iconos (SVG en línea, sin dependencias) ------------------------------ */
 const Svg = ({ d, size=20, fill="none", extra }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
@@ -206,6 +230,7 @@ const IcAbajo  = p => <Svg {...p} d="m6 9 6 6 6-6"/>;
    ========================================================================= */
 const K_CACHE = "gymlog.cache";
 const K_COLA  = "gymlog.cola";
+const K_NUEVOS = "gymlog.ejerciciosNuevos";
 
 const guardaLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} };
 const leeLocal = (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch(e){ return def; } };
@@ -233,6 +258,7 @@ const API = {
   },
   guardar(payload)           { return API.post("guardarEntrenamiento", payload); },
   guardarPlantilla(payload)  { return API.post("guardarPlantilla", payload); },
+  crearEjercicio(payload)    { return API.post("crearEjercicio", payload); },
   eliminarPlantilla(id)      { return API.post("eliminarPlantilla", { id }); }
 };
 
@@ -277,17 +303,14 @@ function FilaSerie({ serie, etiqueta, anterior, onCambio, onCheck, onMenu }) {
   );
 }
 
-function Bloque({ bloque, ej, historial, onMenuEjercicio, onMenuSerie, onCambio, onCheck, onAgregarSerie, onVerImagen }) {
+function Bloque({ bloque, ej, historial, onMenuEjercicio, onMenuSerie, onCambio, onCheck, onAgregarSerie }) {
   const cat = ej[bloque.idEjercicio] || { nombre:"(ejercicio no encontrado)", musculo:"Core" };
   const prev = historial[bloque.idEjercicio];
   let n = 0;
   return (
     <div style={{marginBottom:26}}>
       <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
-        <button className="btn" style={{padding:0, background:"none"}}
-          onClick={() => cat.urlImagen && onVerImagen(cat)}>
-          <Avatar nombre={cat.nombre} musculo={cat.musculo} url={cat.urlImagen} size={34}/>
-        </button>
+        <AvatarZoom nombre={cat.nombre} musculo={cat.musculo} url={cat.urlImagen} size={34} zoom={160}/>
         <h3 style={{flex:1, color:"var(--azul-b)", lineHeight:1.15}}>{cat.nombre}</h3>
         <button className="btn btn-cuadro" style={{width:36, height:36, color:"var(--azul-b)"}}
           onClick={onMenuEjercicio}><IcMas size={18}/></button>
@@ -367,11 +390,89 @@ function ModalTexto({ titulo, valorInicial, placeholder, onGuardar, onCerrar }) 
 }
 
 const MUSCULOS = ["Todos","Pecho","Espalda","Hombros","Bíceps","Tríceps","Piernas","Glúteos","Core","Cardio","Full Body"];
+const CATEGORIAS = ["Barra","Mancuernas","Máquina","Polea","Peso corporal"];
 
-function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar }) {
+/* Alta rápida de un ejercicio que no está en el catálogo, pensada para
+   resolverlo de pie en el gimnasio: nombre, grupo muscular y poco más. */
+function FormNuevoEjercicio({ onCrear, onCancelar, creando }) {
+  const [nombre, setNombre] = useState("");
+  const [musculo, setMusculo] = useState("Pecho");
+  const [categoria, setCategoria] = useState("Máquina");
+  const [descanso, setDescanso] = useState(90);
+  const [series, setSeries] = useState(3);
+  const [reps, setReps] = useState("10");
+  const [url, setUrl] = useState("");
+
+  const listo = nombre.trim().length > 1 && !creando;
+
+  return (
+    <div className="px" style={{flex:1, overflowY:"auto", paddingBottom:40}}>
+      <p className="small sb muted" style={{margin:"4px 0 6px"}}>Nombre del ejercicio</p>
+      <input className="ta" autoFocus value={nombre} placeholder="Ej: Remo en máquina Hammer"
+        onChange={e => setNombre(e.target.value)} style={{height:48, marginBottom:18}}/>
+
+      <p className="small sb muted" style={{margin:"0 0 6px"}}>Grupo muscular</p>
+      <div className="chips" style={{marginBottom:18, flexWrap:"wrap"}}>
+        {MUSCULOS.filter(m => m !== "Todos").map(m => (
+          <button key={m} className={"chip" + (musculo === m ? " on" : "")}
+            style={{marginBottom:6}} onClick={() => setMusculo(m)}>{m}</button>
+        ))}
+      </div>
+
+      <p className="small sb muted" style={{margin:"0 0 6px"}}>Equipo</p>
+      <div className="chips" style={{marginBottom:18, flexWrap:"wrap"}}>
+        {CATEGORIAS.map(c => (
+          <button key={c} className={"chip" + (categoria === c ? " on" : "")}
+            style={{marginBottom:6}} onClick={() => setCategoria(c)}>{c}</button>
+        ))}
+      </div>
+
+      <p className="small sb muted" style={{margin:"0 0 6px"}}>Descanso entre series</p>
+      <div className="chips" style={{marginBottom:18}}>
+        {[30,60,90,120,150,180].map(d => (
+          <button key={d} className={"chip" + (descanso === d ? " on" : "")}
+            onClick={() => setDescanso(d)}>{fmtMMSS(d)}</button>
+        ))}
+      </div>
+
+      <p className="small sb muted" style={{margin:"0 0 6px"}}>Lo que planeas hacer hoy</p>
+      <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
+        <span className="small muted3" style={{flex:1}}>Series</span>
+        <button className="btn" style={{width:34, height:34, background:"var(--card2)", color:"var(--txt)"}}
+          onClick={() => setSeries(n => Math.max(1, n-1))}><IcMinus size={14}/></button>
+        <span className="b num" style={{width:24, textAlign:"center"}}>{series}</span>
+        <button className="btn" style={{width:34, height:34, background:"var(--card2)", color:"var(--txt)"}}
+          onClick={() => setSeries(n => Math.min(10, n+1))}><IcPlus size={14}/></button>
+      </div>
+      <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:18}}>
+        <span className="small muted3" style={{flex:1}}>Reps objetivo</span>
+        <input className="inp num" inputMode="numeric" value={reps}
+          onChange={e => setReps(e.target.value)} style={{width:72, height:34}}/>
+      </div>
+
+      <p className="small sb muted" style={{margin:"0 0 6px"}}>URL de la imagen (opcional)</p>
+      <input className="ta" value={url} placeholder="https://..."
+        onChange={e => setUrl(e.target.value)} style={{height:44, marginBottom:20, fontSize:14}}/>
+
+      <button className="btn btn-azul" disabled={!listo}
+        onClick={() => onCrear({ nombre: nombre.trim(), musculo, categoria, descansoSeg: descanso,
+          urlImagen: url.trim(), series, reps: reps.trim() })}>
+        {creando ? "Guardando…" : "Crear y añadir"}
+      </button>
+      <button className="btn btn-gris" style={{marginTop:10}} onClick={onCancelar}>Volver al catálogo</button>
+      <p className="xs muted3" style={{marginTop:14}}>
+        El ejercicio queda guardado en Catalogo_Ejercicios y estará disponible siempre.
+        Las series y reps de arriba son solo para dejar la tabla lista hoy.
+      </p>
+    </div>
+  );
+}
+
+function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar, onCrear, creando }) {
   const [q, setQ] = useState("");
   const [m, setM] = useState("Todos");
   const [sel, setSel] = useState([]);
+  const [nuevo, setNuevo] = useState(false);
 
   const lista = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -394,9 +495,18 @@ function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar }) {
     <div className="fondo">
       <div className="modal-lleno">
         <div style={{display:"flex", alignItems:"center", gap:12, padding:"16px 16px 8px"}}>
-          <button className="btn btn-cuadro" style={{width:36, height:36}} onClick={onCerrar}><IcX size={18}/></button>
-          <h3 style={{flex:1}}>{modo === "reemplazar" ? "Remplazar ejercicio" : "Añadir ejercicios"}</h3>
-          {modo !== "reemplazar" && (
+          <button className="btn btn-cuadro" style={{width:36, height:36}}
+            onClick={() => nuevo ? setNuevo(false) : onCerrar()}><IcX size={18}/></button>
+          <h3 style={{flex:1}}>
+            {nuevo ? "Ejercicio nuevo" : (modo === "reemplazar" ? "Remplazar ejercicio" : "Añadir ejercicios")}
+          </h3>
+          {!nuevo && onCrear && (
+            <button className="btn" style={{padding:"0 12px", height:36, fontSize:14,
+              background:"var(--card2)", color:"var(--azul-b)"}} onClick={() => setNuevo(true)}>
+              <IcPlus size={15}/> Nuevo
+            </button>
+          )}
+          {!nuevo && modo !== "reemplazar" && (
             <button className="btn" disabled={!sel.length} onClick={() => onConfirmar(sel)}
               style={{padding:"0 16px", height:36, fontSize:14,
                 background: sel.length ? "#2563eb" : "var(--card2)", color: sel.length ? "#fff" : "#525252"}}>
@@ -405,22 +515,24 @@ function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar }) {
           )}
         </div>
 
-        <div className="px" style={{paddingBottom:8}}>
+        {nuevo && <FormNuevoEjercicio onCrear={onCrear} creando={creando} onCancelar={() => setNuevo(false)}/>}
+
+        {!nuevo && <div className="px" style={{paddingBottom:8}}>
           <div className="buscador">
             <IcSearch size={18}/><input value={q} placeholder="Buscar" onChange={e => setQ(e.target.value)}/>
             {q ? <button className="btn" style={{background:"none", color:"var(--txt3)"}} onClick={() => setQ("")}><IcX size={16}/></button> : null}
           </div>
-        </div>
+        </div>}
 
-        <div className="px chips" style={{paddingBottom:10}}>
+        {!nuevo && <div className="px chips" style={{paddingBottom:10}}>
           {MUSCULOS.map(x => (
             <button key={x} className={"chip" + (m === x ? " on" : "")} onClick={() => setM(x)}>
               {x === "Todos" ? "Cualquier parte del cuerpo" : x}
             </button>
           ))}
-        </div>
+        </div>}
 
-        <div className="px" style={{flex:1, overflowY:"auto", paddingBottom:30}}>
+        {!nuevo && <div className="px" style={{flex:1, overflowY:"auto", paddingBottom:30}}>
           {!lista.length && <p className="small muted3" style={{textAlign:"center", padding:"40px 0"}}>
             Sin resultados. Prueba otro nombre o cambia el filtro.</p>}
           {Object.keys(grupos).map(l => (
@@ -442,13 +554,13 @@ function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar }) {
               })}
             </div>
           ))}
-        </div>
+        </div>}
       </div>
     </div>
   );
 }
 
-function EditorPlantilla({ inicial, catalogo, historial, guardando, onGuardar, onCerrar }) {
+function EditorPlantilla({ inicial, catalogo, historial, guardando, creandoEj, onCrearEjercicio, onGuardar, onCerrar }) {
   const [nombre, setNombre] = useState(inicial ? inicial.nombreRutina : "");
   const [items, setItems] = useState(inicial ? inicial.items : []);
   const [catAbierto, setCatAbierto] = useState(false);
@@ -497,7 +609,7 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, onGuardar, o
           return (
             <div key={x.idEjercicio + "-" + i} className="card" style={{marginBottom:8, padding:10}}>
               <div style={{display:"flex", alignItems:"center", gap:10}}>
-                <Avatar nombre={c.nombre} musculo={c.musculo} url={c.urlImagen} size={36}/>
+                <AvatarZoom nombre={c.nombre} musculo={c.musculo} url={c.urlImagen} size={36} zoom={150}/>
                 <div style={{flex:1, minWidth:0}}>
                   <p className="sb" style={{margin:0, lineHeight:1.2}}>{c.nombre}</p>
                   <p className="xs muted3" style={{margin:0}}>{c.musculo} · descanso {fmtMMSS(c.descansoSeg || 90)}</p>
@@ -533,10 +645,15 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, onGuardar, o
       </div>
 
       {catAbierto && (
-        <ModalCatalogo catalogo={catalogo} modo="agregar" historial={historial}
+        <ModalCatalogo catalogo={catalogo} modo="agregar" historial={historial} creando={creandoEj}
           onCerrar={() => setCatAbierto(false)}
           onConfirmar={ids => {
             setItems(xs => [...xs, ...ids.map(id => ({ idEjercicio:id, seriesObjetivo:3 }))]);
+            setCatAbierto(false);
+          }}
+          onCrear={async def => {
+            const e = await onCrearEjercicio(def);
+            setItems(xs => [...xs, { idEjercicio:e.id, seriesObjetivo: def.series || 3 }]);
             setCatAbierto(false);
           }}/>
       )}
@@ -672,6 +789,9 @@ function App() {
   const [error, setError] = useState("");
   const [sinRed, setSinRed] = useState(!navigator.onLine);
   const [cola, setCola] = useState(() => leeLocal(K_COLA, []));
+  // Ejercicios creados sin conexión: viven aquí hasta que la hoja les da un ID real.
+  const [nuevosEj, setNuevosEj] = useState(() => leeLocal(K_NUEVOS, []));
+  const [creandoEj, setCreandoEj] = useState(false);
 
   const [sesion, setSesion] = useState(null);
   const [transcurrido, setTranscurrido] = useState(0);
@@ -681,7 +801,6 @@ function App() {
   const [modalTexto, setModalTexto] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [editor, setEditor] = useState(null);
-  const [imagen, setImagen] = useState(null);
   const [guardandoPl, setGuardandoPl] = useState(false);
   const [aviso, setAviso] = useState("");
   const avisoRef = useRef(null);
@@ -723,12 +842,19 @@ function App() {
   });
 
   /* --- cola de envíos --------------------------------------------------- */
+  const limpiarTemporales = payload => {
+    const ids = (payload.ejerciciosNuevos || []).map(x => x.id);
+    if (!ids.length) return;
+    const q = leeLocal(K_NUEVOS, []).filter(x => ids.indexOf(x.id) === -1);
+    guardaLocal(K_NUEVOS, q); setNuevosEj(q);
+  };
+
   const sincronizar = async () => {
     const pend = leeLocal(K_COLA, []);
     if (!pend.length || !configurada()) return;
     const quedan = [];
     for (const p of pend) {
-      try { await API.guardar(p); } catch (e) { quedan.push(p); }
+      try { await API.guardar(p); limpiarTemporales(p); } catch (e) { quedan.push(p); }
     }
     guardaLocal(K_COLA, quedan); setCola(quedan);
     if (quedan.length < pend.length) { mostrarAviso("Entrenamientos sincronizados."); cargar(true, false, true); }
@@ -761,7 +887,9 @@ function App() {
   }, [descanso]);
 
   /* --- índices ---------------------------------------------------------- */
-  const ej = useMemo(() => datos ? Object.fromEntries(datos.catalogo.map(e => [e.id, e])) : {}, [datos]);
+  const catalogo = useMemo(() =>
+    datos ? datos.catalogo.concat(nuevosEj) : nuevosEj, [datos, nuevosEj]);
+  const ej = useMemo(() => Object.fromEntries(catalogo.map(e => [e.id, e])), [catalogo]);
 
   const historial = useMemo(() => {
     if (!datos) return {};
@@ -788,12 +916,13 @@ function App() {
   }, [datos]);
 
   /* --- sesión ----------------------------------------------------------- */
-  const nuevoBloque = (idEjercicio, objetivo) => {
-    const cat = ej[idEjercicio] || { descansoSeg: 90 };
+  const nuevoBloque = (idEjercicio, objetivo, reps, fallback) => {
+    const cat = ej[idEjercicio] || fallback || { descansoSeg: 90 };
     const prev = historial[idEjercicio];
     const total = prev ? Math.max(prev.series.length, 1) : (objetivo || 3);
-    return { uid: nuevoId("BL"), idEjercicio, descansoSeg: cat.descansoSeg, nota: "",
-      series: Array.from({length: total}, () => ({ id: nuevoId("SE"), kg:"", reps:"", check:false, esCalentamiento:false, notas:"" })) };
+    return { uid: nuevoId("BL"), idEjercicio, descansoSeg: cat.descansoSeg || 90, nota: "",
+      series: Array.from({length: total}, () => ({ id: nuevoId("SE"), kg:"",
+        reps: reps ? String(reps) : "", check:false, esCalentamiento:false, notas:"" })) };
   };
 
   const iniciarSesion = plantilla => {
@@ -873,8 +1002,13 @@ function App() {
       });
     });
 
+    const usados = {};
+    series.forEach(x => { usados[x.idEjercicio] = true; });
+    const ejerciciosNuevos = nuevosEj.filter(x => usados[x.id]);
+
     const payload = { clienteId: sesion.id, fecha: sesion.fecha, horaInicio: sesion.horaInicio,
-      horaFin: horaAhora(), nombre: sesion.nombre, idPlantilla: sesion.idPlantilla, series };
+      horaFin: horaAhora(), nombre: sesion.nombre, idPlantilla: sesion.idPlantilla,
+      series, ejerciciosNuevos };
 
     // 1) estado local optimista: el historial se actualiza al tiro
     const idLocal = "LOCAL-" + sesion.id;
@@ -891,6 +1025,7 @@ function App() {
     setResumen(null); setSesion(null); setDescanso(null);
     try {
       await API.guardar(payload);
+      limpiarTemporales(payload);
       mostrarAviso("Entrenamiento guardado en la hoja.");
       cargar(true, false, true);
     } catch (e) {
@@ -898,6 +1033,27 @@ function App() {
       guardaLocal(K_COLA, q); setCola(q);
       mostrarAviso("Guardado en el teléfono. Se subirá cuando haya conexión.");
     }
+  };
+
+  /* --- catálogo ---------------------------------------------------------- */
+  const crearEjercicio = async def => {
+    const base = { nombre: def.nombre, musculo: def.musculo, categoria: def.categoria,
+                   descansoSeg: def.descansoSeg, urlImagen: def.urlImagen || "" };
+    setCreandoEj(true);
+    try {
+      const r = await API.crearEjercicio(base);
+      const d = Object.assign({}, datos, { catalogo: datos.catalogo.concat([r.ejercicio]) });
+      setDatos(d); guardaLocal(K_CACHE, d);
+      mostrarAviso("Ejercicio guardado en el catálogo.");
+      return r.ejercicio;
+    } catch (e) {
+      // Sin señal: se usa un ID temporal y la hoja lo bautiza al sincronizar.
+      const temp = Object.assign({ id: "TMP-" + Date.now().toString(36) }, base);
+      const q = nuevosEj.concat([temp]);
+      setNuevosEj(q); guardaLocal(K_NUEVOS, q);
+      mostrarAviso("Sin conexión: el ejercicio se creará al sincronizar.");
+      return temp;
+    } finally { setCreandoEj(false); }
   };
 
   /* --- plantillas -------------------------------------------------------- */
@@ -1006,8 +1162,9 @@ function App() {
       )}
 
       {editor && !sesion && (
-        <EditorPlantilla inicial={editor} catalogo={datos.catalogo} historial={historial}
-          guardando={guardandoPl} onGuardar={guardarPlantilla} onCerrar={() => setEditor(null)} />
+        <EditorPlantilla inicial={editor} catalogo={catalogo} historial={historial}
+          guardando={guardandoPl} creandoEj={creandoEj} onCrearEjercicio={crearEjercicio}
+          onGuardar={guardarPlantilla} onCerrar={() => setEditor(null)} />
       )}
 
       {sesion && (
@@ -1049,8 +1206,7 @@ function App() {
                 onMenuSerie={sid => menuSerie(b, sid)}
                 onCambio={(sid,c,v) => cambiarSerie(b.uid, sid, c, v)}
                 onCheck={(sid,ant) => alternarCheck(b.uid, sid, ant)}
-                onAgregarSerie={() => agregarSerie(b.uid)}
-                onVerImagen={setImagen} />
+                onAgregarSerie={() => agregarSerie(b.uid)} />
             ))}
 
             <button className="btn btn-azul-suave" style={{marginBottom:10}}
@@ -1068,9 +1224,16 @@ function App() {
         onAjustar={v => setDescanso(x => x ? { ...x, restante: Math.max(1, x.restante + v), total: Math.max(x.total, x.restante + v) } : x)}
         onSaltar={() => setDescanso(null)} />}
 
-      {catalogoAbierto && <ModalCatalogo catalogo={datos.catalogo} modo={catalogoAbierto.modo} historial={historial}
+      {catalogoAbierto && <ModalCatalogo catalogo={catalogo} modo={catalogoAbierto.modo} historial={historial}
+        creando={creandoEj}
         onCerrar={() => setCatalogoAbierto(null)}
-        onConfirmar={ids => catalogoAbierto.modo === "reemplazar" ? reemplazar(catalogoAbierto.uid, ids[0]) : agregarEjercicios(ids)} />}
+        onConfirmar={ids => catalogoAbierto.modo === "reemplazar" ? reemplazar(catalogoAbierto.uid, ids[0]) : agregarEjercicios(ids)}
+        onCrear={async def => {
+          const e = await crearEjercicio(def);
+          if (catalogoAbierto.modo === "reemplazar") { reemplazar(catalogoAbierto.uid, e.id); return; }
+          editarSesion(x => ({ ...x, ejercicios: [...x.ejercicios, nuevoBloque(e.id, def.series, def.reps, e)] }));
+          setCatalogoAbierto(null);
+        }} />}
 
       {hoja && <Hoja titulo={hoja.titulo} opciones={hoja.opciones} onCerrar={() => setHoja(null)} />}
 
@@ -1105,18 +1268,6 @@ function App() {
               onClick={guardarSesion}>Guardar</button>
           </div>
         </div></div>
-      )}
-
-      {imagen && (
-        <div className="fondo" style={{alignItems:"center"}} onClick={() => setImagen(null)}>
-          <div style={{width:"100%", maxWidth:440, padding:16}} onClick={e => e.stopPropagation()}>
-            <div style={{background:"#fff", borderRadius:18, overflow:"hidden"}}>
-              <img src={imagen.urlImagen} alt={imagen.nombre} style={{width:"100%", display:"block"}}/>
-            </div>
-            <p className="sb" style={{textAlign:"center", margin:"12px 0"}}>{imagen.nombre}</p>
-            <button className="btn btn-gris" onClick={() => setImagen(null)}>Cerrar</button>
-          </div>
-        </div>
       )}
 
       {aviso && <div className="toast"><div>{aviso}</div></div>}
