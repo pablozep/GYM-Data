@@ -1,7 +1,7 @@
 /* Gym Log — service worker: cachea la app para que abra sin conexión.
    Sube el número de CACHE cada vez que edites index.html, si no el iPhone
    te seguirá mostrando la versión vieja. */
-const CACHE = "gymlog-v3";
+const CACHE = "gymlog-v4";
 
 const ARCHIVOS = [
   "./",
@@ -42,6 +42,10 @@ self.addEventListener("fetch", e => {
       const copia = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copia)).catch(() => {});
       return res;
-    }).catch(() => caches.match("./index.html")))
+    }).catch(() =>
+      // Solo una navegación cae de vuelta al HTML. Una imagen que no carga
+      // debe fallar como imagen, no devolver la página entera.
+      e.request.mode === "navigate" ? caches.match("./index.html") : Response.error()
+    ))
   );
 });

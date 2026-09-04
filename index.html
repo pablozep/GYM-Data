@@ -142,8 +142,8 @@
 /* =========================================================================
    CONFIGURACIÓN — las dos únicas líneas que debes editar
    ========================================================================= */
-const API_URL = "https://script.google.com/macros/s/AKfycbw49hB3x1D27OU3wHFlOmKbg7DeR5jr34-V2mDhTixFRCZsglDQcgpcyN7I8YEtePaO/exec";
-const TOKEN   = "8mK2x9PqL4wV7tY1bC0eR3zN5";
+const API_URL = "PEGA_AQUI_LA_URL_DE_TU_APPS_SCRIPT";
+const TOKEN   = "PEGA_AQUI_EL_MISMO_TOKEN_DEL_APPS_SCRIPT";
 
 /* ========================================================================= */
 
@@ -239,8 +239,18 @@ const API = {
 /* =========================================================================
    COMPONENTES
    ========================================================================= */
-function Avatar({ nombre, musculo, size = 42 }) {
+function Avatar({ nombre, musculo, url, size = 42 }) {
+  const [falla, setFalla] = useState(false);
   const c = COLOR[musculo] || "#94a3b8";
+
+  // Si la URL está vacía o el servidor la rechaza (hotlinking, 404, enlace
+  // caducado), se muestran las iniciales. Nunca queda un cuadro roto.
+  if (url && !falla) return (
+    <img src={url} alt="" loading="lazy" onError={() => setFalla(true)}
+      style={{ width:size, height:size, minWidth:size, flex:"0 0 auto",
+               borderRadius:12, objectFit:"cover", background:"#fff" }}/>
+  );
+
   return <div className="avatar" style={{ width:size, height:size, minWidth:size,
     background:c+"22", color:c, fontSize:size*0.34 }}>{iniciales(nombre)}</div>;
 }
@@ -267,14 +277,17 @@ function FilaSerie({ serie, etiqueta, anterior, onCambio, onCheck, onMenu }) {
   );
 }
 
-function Bloque({ bloque, ej, historial, onMenuEjercicio, onMenuSerie, onCambio, onCheck, onAgregarSerie }) {
+function Bloque({ bloque, ej, historial, onMenuEjercicio, onMenuSerie, onCambio, onCheck, onAgregarSerie, onVerImagen }) {
   const cat = ej[bloque.idEjercicio] || { nombre:"(ejercicio no encontrado)", musculo:"Core" };
   const prev = historial[bloque.idEjercicio];
   let n = 0;
   return (
     <div style={{marginBottom:26}}>
       <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
-        <Avatar nombre={cat.nombre} musculo={cat.musculo} size={34}/>
+        <button className="btn" style={{padding:0, background:"none"}}
+          onClick={() => cat.urlImagen && onVerImagen(cat)}>
+          <Avatar nombre={cat.nombre} musculo={cat.musculo} url={cat.urlImagen} size={34}/>
+        </button>
         <h3 style={{flex:1, color:"var(--azul-b)", lineHeight:1.15}}>{cat.nombre}</h3>
         <button className="btn btn-cuadro" style={{width:36, height:36, color:"var(--azul-b)"}}
           onClick={onMenuEjercicio}><IcMas size={18}/></button>
@@ -417,7 +430,7 @@ function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar }) {
                 const on = sel.includes(e.id), prev = historial[e.id];
                 return (
                   <button key={e.id} className="item" onClick={() => toca(e.id)}>
-                    <Avatar nombre={e.nombre} musculo={e.musculo}/>
+                    <Avatar nombre={e.nombre} musculo={e.musculo} url={e.urlImagen}/>
                     <div style={{flex:1, minWidth:0}}>
                       <p className="sb" style={{margin:0, lineHeight:1.2}}>{e.nombre}</p>
                       <p className="small muted3" style={{margin:0}}>{e.musculo} · {e.categoria}</p>
@@ -484,7 +497,7 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, onGuardar, o
           return (
             <div key={x.idEjercicio + "-" + i} className="card" style={{marginBottom:8, padding:10}}>
               <div style={{display:"flex", alignItems:"center", gap:10}}>
-                <Avatar nombre={c.nombre} musculo={c.musculo} size={36}/>
+                <Avatar nombre={c.nombre} musculo={c.musculo} url={c.urlImagen} size={36}/>
                 <div style={{flex:1, minWidth:0}}>
                   <p className="sb" style={{margin:0, lineHeight:1.2}}>{c.nombre}</p>
                   <p className="xs muted3" style={{margin:0}}>{c.musculo} · descanso {fmtMMSS(c.descansoSeg || 90)}</p>
@@ -668,6 +681,7 @@ function App() {
   const [modalTexto, setModalTexto] = useState(null);
   const [resumen, setResumen] = useState(null);
   const [editor, setEditor] = useState(null);
+  const [imagen, setImagen] = useState(null);
   const [guardandoPl, setGuardandoPl] = useState(false);
   const [aviso, setAviso] = useState("");
   const avisoRef = useRef(null);
@@ -1035,7 +1049,8 @@ function App() {
                 onMenuSerie={sid => menuSerie(b, sid)}
                 onCambio={(sid,c,v) => cambiarSerie(b.uid, sid, c, v)}
                 onCheck={(sid,ant) => alternarCheck(b.uid, sid, ant)}
-                onAgregarSerie={() => agregarSerie(b.uid)} />
+                onAgregarSerie={() => agregarSerie(b.uid)}
+                onVerImagen={setImagen} />
             ))}
 
             <button className="btn btn-azul-suave" style={{marginBottom:10}}
@@ -1090,6 +1105,18 @@ function App() {
               onClick={guardarSesion}>Guardar</button>
           </div>
         </div></div>
+      )}
+
+      {imagen && (
+        <div className="fondo" style={{alignItems:"center"}} onClick={() => setImagen(null)}>
+          <div style={{width:"100%", maxWidth:440, padding:16}} onClick={e => e.stopPropagation()}>
+            <div style={{background:"#fff", borderRadius:18, overflow:"hidden"}}>
+              <img src={imagen.urlImagen} alt={imagen.nombre} style={{width:"100%", display:"block"}}/>
+            </div>
+            <p className="sb" style={{textAlign:"center", margin:"12px 0"}}>{imagen.nombre}</p>
+            <button className="btn btn-gris" onClick={() => setImagen(null)}>Cerrar</button>
+          </div>
+        </div>
       )}
 
       {aviso && <div className="toast"><div>{aviso}</div></div>}
