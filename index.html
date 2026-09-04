@@ -149,6 +149,10 @@ const TOKEN   = "8mK2x9PqL4wV7tY1bC0eR3zN5";
 
 const { useState, useEffect, useMemo, useRef } = React;
 
+// Se muestra abajo del Home: sirve para confirmar de un vistazo qué versión
+// quedó realmente publicada después de subir los archivos.
+const VERSION = "v7";
+
 /* --- utilidades ---------------------------------------------------------- */
 const pad = n => String(n).padStart(2, "0");
 const fmtCrono = s => { const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=Math.floor(s%60);
@@ -181,33 +185,50 @@ function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150, zoomable = tr
   const [falla, setFalla] = useState(false);
   const [congelada, setCongelada] = useState(false);
   const lienzo = useRef(null);
+  const fuente = useRef(null);
+
+  // Dibuja el fotograma actual (el primero, porque la imagen vive fuera del
+  // DOM y no se anima) recortado en cuadrado, como object-fit: cover.
+  const pintar = () => {
+    const c = lienzo.current, img = fuente.current;
+    if (!c || !img || !img.naturalWidth) return false;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const px = Math.round(size * dpr);
+      c.width = px; c.height = px;
+      const lado = Math.min(img.naturalWidth, img.naturalHeight);
+      c.getContext("2d").drawImage(img,
+        (img.naturalWidth - lado) / 2, (img.naturalHeight - lado) / 2, lado, lado, 0, 0, px, px);
+      return true;
+    } catch (e) { return false; }
+  };
 
   useEffect(() => {
     if (!url) return;
     setCongelada(false);
+    fuente.current = null;
     let vivo = true;
-    const img = new Image();
 
+    const img = new Image();
     img.onload = () => {
-      const c = lienzo.current;
-      if (!vivo || !c) return;
-      try {
-        const dpr = window.devicePixelRatio || 1;
-        const px = Math.round(size * dpr);
-        c.width = px; c.height = px;
-        const ctx = c.getContext("2d");
-        // Recorte cuadrado centrado, equivalente a object-fit: cover
-        const lado = Math.min(img.naturalWidth, img.naturalHeight);
-        ctx.drawImage(img, (img.naturalWidth - lado) / 2, (img.naturalHeight - lado) / 2,
-          lado, lado, 0, 0, px, px);
-        setCongelada(true);
-      } catch (e) { /* si el canvas falla, se queda el <img> normal */ }
+      if (!vivo) return;
+      fuente.current = img;
+      if (pintar()) { setCongelada(true); return; }
+      // El canvas puede no estar montado todavía: un reintento en el próximo cuadro.
+      requestAnimationFrame(() => { if (vivo && pintar()) setCongelada(true); });
     };
     img.onerror = () => { if (vivo) setFalla(true); };
     img.src = url;
 
     return () => { vivo = false; };
   }, [url, size]);
+
+  // Al cerrar el zoom se repinta: así el GIF vuelve a quedar detenido aunque
+  // el canvas se hubiera quedado en blanco por cualquier motivo.
+  useEffect(() => {
+    if (abierto || !fuente.current) return;
+    if (pintar()) setCongelada(true);
+  }, [abierto]);
 
   if (!url || falla) return <Avatar nombre={nombre} musculo={musculo} size={size}/>;
 
@@ -814,6 +835,7 @@ function Home({ datos, pendientes, sinRed, refrescando, onIniciarVacio, onInicia
             </p>
           </div>
         ))}
+        <p className="xs muted3" style={{textAlign:"center", margin:"20px 0 8px"}}>Gym Log · {VERSION}</p>
       </section>
     </div>
   );
@@ -1011,7 +1033,12 @@ function App() {
     { id: nuevoId("SE"), kg:"", reps:"", check:false, esCalentamiento:true, notas:"" },
     ...b.series ]}));
 
-  const agregarEjercicios = ids => { editarSesion(s => ({ ...s, ejercicios: [...s.ejercicios, ...ids.map(nuevoBloque)] })); setCatalogoAbierto(null); };
+  // map() entrega (valor, índice, arreglo): hay que llamar a nuevoBloque con
+  // un solo argumento, si no el índice y el arreglo caen en objetivo y reps.
+  const agregarEjercicios = ids => {
+    editarSesion(s => ({ ...s, ejercicios: [...s.ejercicios, ...ids.map(id => nuevoBloque(id))] }));
+    setCatalogoAbierto(null);
+  };
 
   const reemplazar = (uid, id) => {
     editarBloque(uid, b => ({ ...b, idEjercicio:id, descansoSeg:(ej[id]||{}).descansoSeg || 90,
