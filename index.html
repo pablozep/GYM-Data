@@ -13,6 +13,11 @@
 <meta name="apple-mobile-web-app-title" content="Gym Log">
 <link rel="apple-touch-icon" href="./icon-192.png">
 
+<!-- Adelanta el handshake TLS con los dominios que se usan sí o sí -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+
 <style>
   :root{
     --bg:#0a0a0a; --card:#171717; --card2:#262626; --linea:#2a2a2a;
@@ -137,8 +142,8 @@
 /* =========================================================================
    CONFIGURACIÓN — las dos únicas líneas que debes editar
    ========================================================================= */
-const API_URL = "https://script.google.com/macros/s/AKfycbw49hB3x1D27OU3wHFlOmKbg7DeR5jr34-V2mDhTixFRCZsglDQcgpcyN7I8YEtePaO/exec";
-const TOKEN   = "8mK2x9PqL4wV7tY1bC0eR3zN5";
+const API_URL = "PEGA_AQUI_LA_URL_DE_TU_APPS_SCRIPT";
+const TOKEN   = "PEGA_AQUI_EL_MISMO_TOKEN_DEL_APPS_SCRIPT";
 
 /* ========================================================================= */
 
@@ -208,8 +213,8 @@ const leeLocal = (k, def) => { try { const v = localStorage.getItem(k); return v
 const configurada = () => API_URL.indexOf("http") === 0 && TOKEN.indexOf("PEGA_AQUI") !== 0;
 
 const API = {
-  async bootstrap() {
-    const r = await fetch(`${API_URL}?action=bootstrap&token=${encodeURIComponent(TOKEN)}`,
+  async bootstrap(fresco) {
+    const r = await fetch(`${API_URL}?action=bootstrap&token=${encodeURIComponent(TOKEN)}${fresco ? "&fresco=1" : ""}`,
       { method: "GET", redirect: "follow" });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || "Respuesta inválida");
@@ -544,7 +549,7 @@ function BarraDescanso({ d, onAjustar, onSaltar }) {
   );
 }
 
-function Home({ datos, pendientes, sinRed, onIniciarVacio, onIniciarPlantilla, onSincronizar,
+function Home({ datos, pendientes, sinRed, refrescando, onIniciarVacio, onIniciarPlantilla, onSincronizar,
                 onRecargar, onNuevaPlantilla, onMenuPlantilla }) {
   const ej = useMemo(() => Object.fromEntries(datos.catalogo.map(e => [e.id, e])), [datos.catalogo]);
 
@@ -567,7 +572,9 @@ function Home({ datos, pendientes, sinRed, onIniciarVacio, onIniciarPlantilla, o
             {datos.entrenamientos.length} sesiones · {datos.series.filter(s => s.check).length} sets registrados
           </p>
         </div>
-        <button className="btn btn-cuadro" onClick={onRecargar}><IcNube/></button>
+        <button className="btn btn-cuadro" onClick={onRecargar} style={refrescando ? {opacity:.5} : null}>
+          {refrescando ? <div className="spin" style={{width:18, height:18, borderWidth:2}}/> : <IcNube/>}
+        </button>
       </header>
 
       {sinRed && <div className="aviso warn">Sin conexión. Puedes entrenar igual: lo guardado se envía solo cuando vuelva la red.</div>}
@@ -642,8 +649,13 @@ function Home({ datos, pendientes, sinRed, onIniciarVacio, onIniciarPlantilla, o
    APP
    ========================================================================= */
 function App() {
-  const [datos, setDatos] = useState(() => leeLocal(K_CACHE, null));
-  const [estado, setEstado] = useState(configurada() ? "cargando" : "sinconfig");
+  // Arranque instantáneo: si hay copia local, la app se pinta con ella y la
+  // hoja se consulta por detrás. La pantalla de espera solo aparece la
+  // primerísima vez, cuando todavía no hay nada guardado en el teléfono.
+  const cacheInicial = leeLocal(K_CACHE, null);
+  const [datos, setDatos] = useState(cacheInicial);
+  const [estado, setEstado] = useState(!configurada() ? "sinconfig" : (cacheInicial ? "listo" : "cargando"));
+  const [refrescando, setRefrescando] = useState(false);
   const [error, setError] = useState("");
   const [sinRed, setSinRed] = useState(!navigator.onLine);
   const [cola, setCola] = useState(() => leeLocal(K_COLA, []));
@@ -664,18 +676,27 @@ function App() {
     avisoRef.current = setTimeout(() => setAviso(""), 2600); };
 
   /* --- carga inicial --------------------------------------------------- */
-  const cargar = async (silencioso, conAviso = true) => {
+  /* --- carga: siempre en segundo plano si ya hay datos ------------------ */
+  const mismos = (a, b) => {
+    if (!a || !b) return false;
+    const limpia = d => JSON.stringify(Object.assign({}, d, { servidor: 0 }));
+    return limpia(a) === limpia(b);
+  };
+
+  const cargar = async (silencioso, conAviso = true, fresco = false) => {
     if (!configurada()) { setEstado("sinconfig"); return; }
-    if (!silencioso && !datos) setEstado("cargando");
+    if (!datos) setEstado("cargando");
+    setRefrescando(true);
     try {
-      const d = await API.bootstrap();
-      setDatos(d); guardaLocal(K_CACHE, d); setEstado("listo"); setError("");
+      const d = await API.bootstrap(fresco);
+      if (!mismos(d, datos)) { setDatos(d); guardaLocal(K_CACHE, d); }
+      setEstado("listo"); setError("");
       if (silencioso && conAviso) mostrarAviso("Datos actualizados desde la hoja.");
     } catch (e) {
       setError(String(e.message || e));
       setEstado(datos ? "listo" : "error");
       if (silencioso && conAviso) mostrarAviso("No se pudo actualizar. Sigues con los datos locales.");
-    }
+    } finally { setRefrescando(false); }
   };
 
   useEffect(() => { cargar(false); }, []);
@@ -696,7 +717,7 @@ function App() {
       try { await API.guardar(p); } catch (e) { quedan.push(p); }
     }
     guardaLocal(K_COLA, quedan); setCola(quedan);
-    if (quedan.length < pend.length) { mostrarAviso("Entrenamientos sincronizados."); cargar(true); }
+    if (quedan.length < pend.length) { mostrarAviso("Entrenamientos sincronizados."); cargar(true, false, true); }
     else if (pend.length) mostrarAviso("Todavía no se pudo subir. Lo reintento después.");
   };
 
@@ -857,7 +878,7 @@ function App() {
     try {
       await API.guardar(payload);
       mostrarAviso("Entrenamiento guardado en la hoja.");
-      cargar(true);
+      cargar(true, false, true);
     } catch (e) {
       const q = [...leeLocal(K_COLA, []), payload];
       guardaLocal(K_COLA, q); setCola(q);
@@ -874,7 +895,7 @@ function App() {
     setGuardandoPl(true);
     try {
       await API.guardarPlantilla(payload);
-      await cargar(true, false);          // recarga: trae el ID real que asignó la hoja
+      await cargar(true, false, true);     // fresco: trae el ID real que asignó la hoja
       setEditor(null);
       mostrarAviso(payload.id ? "Plantilla actualizada." : "Plantilla creada.");
     } catch (e) {
@@ -886,7 +907,7 @@ function App() {
     setHoja(null);
     try {
       await API.eliminarPlantilla(p.id);
-      await cargar(true, false);
+      await cargar(true, false, true);
       mostrarAviso("Plantilla eliminada. El historial no se toca.");
     } catch (e) {
       mostrarAviso("No se pudo eliminar: " + (e.message || "revisa la conexión"));
@@ -961,11 +982,11 @@ function App() {
   return (
     <div className="app">
       {!sesion && !editor && (
-        <Home datos={datos} pendientes={cola.length} sinRed={sinRed}
+        <Home datos={datos} pendientes={cola.length} sinRed={sinRed} refrescando={refrescando}
           onIniciarVacio={() => iniciarSesion(null)}
           onIniciarPlantilla={iniciarSesion}
           onSincronizar={sincronizar}
-          onRecargar={() => cargar(true)}
+          onRecargar={() => cargar(true, true, true)}
           onNuevaPlantilla={() => setEditor({ id:"", nombreRutina:"", items:[] })}
           onMenuPlantilla={menuPlantilla} />
       )}
