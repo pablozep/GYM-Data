@@ -171,24 +171,68 @@ const COLOR = { "Pecho":"#f43f5e","Espalda":"#10b981","Hombros":"#f59e0b","Bíce
   "Cardio":"#a3e635","Full Body":"#818cf8" };
 
 /* Miniatura que crece al tocarla y vuelve a su tamaño al tocar fuera.
-   La imagen ampliada flota sobre el contenido: no empuja la lista. */
-function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150 }) {
+   La imagen ampliada flota sobre el contenido: no empuja la lista.
+
+   Los GIF quedan congelados en la miniatura: se dibuja el primer fotograma
+   en un canvas y recién al ampliar se monta el <img> real, que sí se anima.
+   Así la lista no tiene diez animaciones corriendo a la vez. */
+function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150, zoomable = true }) {
   const [abierto, setAbierto] = useState(false);
   const [falla, setFalla] = useState(false);
+  const [congelada, setCongelada] = useState(false);
+  const lienzo = useRef(null);
+
+  useEffect(() => {
+    if (!url) return;
+    setCongelada(false);
+    let vivo = true;
+    const img = new Image();
+
+    img.onload = () => {
+      const c = lienzo.current;
+      if (!vivo || !c) return;
+      try {
+        const dpr = window.devicePixelRatio || 1;
+        const px = Math.round(size * dpr);
+        c.width = px; c.height = px;
+        const ctx = c.getContext("2d");
+        // Recorte cuadrado centrado, equivalente a object-fit: cover
+        const lado = Math.min(img.naturalWidth, img.naturalHeight);
+        ctx.drawImage(img, (img.naturalWidth - lado) / 2, (img.naturalHeight - lado) / 2,
+          lado, lado, 0, 0, px, px);
+        setCongelada(true);
+      } catch (e) { /* si el canvas falla, se queda el <img> normal */ }
+    };
+    img.onerror = () => { if (vivo) setFalla(true); };
+    img.src = url;
+
+    return () => { vivo = false; };
+  }, [url, size]);
 
   if (!url || falla) return <Avatar nombre={nombre} musculo={musculo} size={size}/>;
+
+  const base = {
+    position:"absolute", top:0, left:0, borderRadius:12, objectFit:"cover",
+    background:"#fff", cursor: zoomable ? "pointer" : "default",
+    width: abierto ? zoom : size, height: abierto ? zoom : size,
+    transition:"width .18s ease, height .18s ease",
+    boxShadow: abierto ? "0 12px 34px rgba(0,0,0,.65)" : "none"
+  };
+
+  // El canvas manda mientras esté cerrada; al ampliar entra el archivo original.
+  const usarLienzo = congelada && !abierto;
 
   return (
     <React.Fragment>
       {abierto && <div style={{position:"fixed", inset:0, zIndex:44}} onClick={() => setAbierto(false)}/>}
-      <div style={{position:"relative", width:size, height:size, flex:"0 0 auto", zIndex: abierto ? 45 : 1}}>
-        <img src={url} alt={nombre} loading="lazy" onError={() => setFalla(true)}
-          onClick={() => setAbierto(a => !a)}
-          style={{ position:"absolute", top:0, left:0,
-                   width: abierto ? zoom : size, height: abierto ? zoom : size,
-                   borderRadius:12, objectFit:"cover", background:"#fff", cursor:"pointer",
-                   transition:"width .18s ease, height .18s ease",
-                   boxShadow: abierto ? "0 12px 34px rgba(0,0,0,.65)" : "none" }}/>
+      <div style={{position:"relative", width:size, height:size, flex:"0 0 auto",
+                   zIndex: abierto ? 45 : 1, pointerEvents: zoomable ? "auto" : "none"}}>
+        <canvas ref={lienzo} onClick={() => zoomable && setAbierto(true)}
+          style={Object.assign({}, base, { display: usarLienzo ? "block" : "none" })}/>
+        {!usarLienzo && (
+          <img src={url} alt={nombre} onError={() => setFalla(true)}
+            onClick={() => zoomable && setAbierto(a => !a)} style={base}/>
+        )}
       </div>
     </React.Fragment>
   );
@@ -542,7 +586,7 @@ function ModalCatalogo({ catalogo, modo, historial, onConfirmar, onCerrar, onCre
                 const on = sel.includes(e.id), prev = historial[e.id];
                 return (
                   <button key={e.id} className="item" onClick={() => toca(e.id)}>
-                    <Avatar nombre={e.nombre} musculo={e.musculo} url={e.urlImagen}/>
+                    <AvatarZoom nombre={e.nombre} musculo={e.musculo} url={e.urlImagen} zoomable={false}/>
                     <div style={{flex:1, minWidth:0}}>
                       <p className="sb" style={{margin:0, lineHeight:1.2}}>{e.nombre}</p>
                       <p className="small muted3" style={{margin:0}}>{e.musculo} · {e.categoria}</p>

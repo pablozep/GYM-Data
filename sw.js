@@ -1,7 +1,7 @@
 /* Gym Log — service worker: cachea la app para que abra sin conexión.
    Sube el número de CACHE cada vez que edites index.html, si no el iPhone
    te seguirá mostrando la versión vieja. */
-const CACHE = "gymlog-v5";
+const CACHE = "gymlog-v6";
 
 const ARCHIVOS = [
   "./",
