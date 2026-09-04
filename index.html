@@ -151,7 +151,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Se muestra abajo del Home: sirve para confirmar de un vistazo qué versión
 // quedó realmente publicada después de subir los archivos.
-const VERSION = "v7";
+const VERSION = "v8";
 
 /* --- utilidades ---------------------------------------------------------- */
 const pad = n => String(n).padStart(2, "0");
@@ -184,11 +184,19 @@ function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150, zoomable = tr
   const [abierto, setAbierto] = useState(false);
   const [falla, setFalla] = useState(false);
   const [congelada, setCongelada] = useState(false);
+  const [srcZoom, setSrcZoom] = useState("");
+  const [pase, setPase] = useState(0);
   const lienzo = useRef(null);
   const fuente = useRef(null);
 
-  // Dibuja el fotograma actual (el primero, porque la imagen vive fuera del
-  // DOM y no se anima) recortado en cuadrado, como object-fit: cover.
+  // WebKit (iOS) comparte una única copia decodificada por URL entre todos los
+  // elementos. Al dibujar el GIF en el canvas, esa copia queda detenida en el
+  // fotograma de ese instante, y el <img> del zoom la hereda congelada.
+  // Por eso el zoom pide la MISMA imagen con otra query: distinto recurso,
+  // línea de tiempo propia. En el Mac da igual, en el iPhone es la diferencia
+  // entre que se anime y que no.
+  const urlZoom = url ? url + (url.indexOf("?") === -1 ? "?" : "&") + "gz=1" : "";
+
   const pintar = () => {
     const c = lienzo.current, img = fuente.current;
     if (!c || !img || !img.naturalWidth) return false;
@@ -214,7 +222,6 @@ function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150, zoomable = tr
       if (!vivo) return;
       fuente.current = img;
       if (pintar()) { setCongelada(true); return; }
-      // El canvas puede no estar montado todavía: un reintento en el próximo cuadro.
       requestAnimationFrame(() => { if (vivo && pintar()) setCongelada(true); });
     };
     img.onerror = () => { if (vivo) setFalla(true); };
@@ -223,36 +230,51 @@ function AvatarZoom({ nombre, musculo, url, size = 34, zoom = 150, zoomable = tr
     return () => { vivo = false; };
   }, [url, size]);
 
-  // Al cerrar el zoom se repinta: así el GIF vuelve a quedar detenido aunque
-  // el canvas se hubiera quedado en blanco por cualquier motivo.
   useEffect(() => {
     if (abierto || !fuente.current) return;
     if (pintar()) setCongelada(true);
   }, [abierto]);
 
-  if (!url || falla) return <Avatar nombre={nombre} musculo={musculo} size={size}/>;
-
-  const base = {
-    position:"absolute", top:0, left:0, borderRadius:12, objectFit:"cover",
-    background:"#fff", cursor: zoomable ? "pointer" : "default",
-    width: abierto ? zoom : size, height: abierto ? zoom : size,
-    transition:"width .18s ease, height .18s ease",
-    boxShadow: abierto ? "0 12px 34px rgba(0,0,0,.65)" : "none"
+  const abrir = () => {
+    if (!zoomable) return;
+    setSrcZoom(urlZoom);
+    setPase(n => n + 1);   // fuerza un elemento nuevo: el GIF parte de cero
+    setAbierto(true);
   };
 
-  // El canvas manda mientras esté cerrada; al ampliar entra el archivo original.
+  if (!url || falla) return <Avatar nombre={nombre} musculo={musculo} size={size}/>;
+
   const usarLienzo = congelada && !abierto;
+  const lado = abierto ? zoom : size;
+
+  const base = {
+    position:"absolute", top:0, left:0, width:lado, height:lado,
+    borderRadius:12, objectFit:"cover", background:"#fff",
+    cursor: zoomable ? "pointer" : "default"
+  };
 
   return (
     <React.Fragment>
       {abierto && <div style={{position:"fixed", inset:0, zIndex:44}} onClick={() => setAbierto(false)}/>}
       <div style={{position:"relative", width:size, height:size, flex:"0 0 auto",
                    zIndex: abierto ? 45 : 1, pointerEvents: zoomable ? "auto" : "none"}}>
-        <canvas ref={lienzo} onClick={() => zoomable && setAbierto(true)}
+
+        <canvas ref={lienzo} onClick={abrir}
           style={Object.assign({}, base, { display: usarLienzo ? "block" : "none" })}/>
+
         {!usarLienzo && (
-          <img src={url} alt={nombre} onError={() => setFalla(true)}
-            onClick={() => zoomable && setAbierto(a => !a)} style={base}/>
+          // key cambia en cada apertura: elemento nuevo, animación desde el inicio.
+          // Sin transiciones ni sombra encima del <img>: en iOS eso también
+          // puede rasterizar el GIF y dejarlo quieto.
+          <img key={"z" + pase} src={abierto ? (srcZoom || url) : url} alt={nombre}
+            onError={() => {
+              // Si el servidor rechaza la query extra, se vuelve a la URL limpia.
+              if (abierto && srcZoom && srcZoom !== url) setSrcZoom(url);
+              else setFalla(true);
+            }}
+            onClick={() => { if (!zoomable) return; abierto ? setAbierto(false) : abrir(); }}
+            style={Object.assign({}, base, abierto
+              ? { boxShadow:"0 12px 34px rgba(0,0,0,.65)" } : {})}/>
         )}
       </div>
     </React.Fragment>
