@@ -151,7 +151,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // Se muestra abajo del Home: sirve para confirmar de un vistazo qué versión
 // quedó realmente publicada después de subir los archivos.
-const VERSION = "v8";
+const VERSION = "v9";
 
 /* --- utilidades ---------------------------------------------------------- */
 const pad = n => String(n).padStart(2, "0");
@@ -662,7 +662,8 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, creandoEj, o
   const series = (i, d) => setItems(xs => xs.map((x,k) =>
     k === i ? { ...x, seriesObjetivo: Math.max(1, Math.min(10, x.seriesObjetivo + d)) } : x));
 
-  const puedeGuardar = nombre.trim().length > 0 && items.length > 0 && !guardando;
+  const temporales = items.filter(x => String(x.idEjercicio).indexOf("TMP-") === 0);
+  const puedeGuardar = nombre.trim().length > 0 && items.length > 0 && !guardando && !temporales.length;
 
   return (
     <div style={{minHeight:"100vh"}}>
@@ -680,6 +681,13 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, creandoEj, o
         <p className="small sb muted" style={{margin:"0 0 6px"}}>Nombre de la rutina</p>
         <input className="ta" value={nombre} placeholder="Ej: Empuje pesado"
           onChange={e => setNombre(e.target.value)} style={{height:48, marginBottom:20}}/>
+
+        {temporales.length > 0 && (
+          <div className="aviso err">
+            Hay {temporales.length} ejercicio(s) sin registrar en el catálogo. Quítalos de la lista
+            y vuelve a agregarlos con conexión: una plantilla no puede apuntar a un ejercicio provisorio.
+          </div>
+        )}
 
         <p className="small sb muted" style={{margin:"0 0 8px"}}>
           Ejercicios ({items.length}) · el orden es el de ejecución
@@ -739,9 +747,11 @@ function EditorPlantilla({ inicial, catalogo, historial, guardando, creandoEj, o
             setCatAbierto(false);
           }}
           onCrear={async def => {
-            const e = await onCrearEjercicio(def);
-            setItems(xs => [...xs, { idEjercicio:e.id, seriesObjetivo: def.series || 3 }]);
-            setCatAbierto(false);
+            try {
+              const e = await onCrearEjercicio(def, false);
+              setItems(xs => [...xs, { idEjercicio:e.id, seriesObjetivo: def.series || 3 }]);
+              setCatAbierto(false);
+            } catch (err) { /* el aviso ya lo mostró la app; no se agrega nada */ }
           }}/>
       )}
     </div>
@@ -947,6 +957,23 @@ function App() {
     guardaLocal(K_COLA, quedan); setCola(quedan);
     if (quedan.length < pend.length) { mostrarAviso("Entrenamientos sincronizados."); cargar(true, false, true); }
     else if (pend.length) mostrarAviso("Todavía no se pudo subir. Lo reintento después.");
+
+    // Ejercicios provisorios que quedaron sueltos (creados sin señal y nunca
+    // usados en un entrenamiento). Fuera de una sesión activa se dan de alta.
+    const sueltos = leeLocal(K_NUEVOS, []);
+    if (!sesion && sueltos.length) {
+      const faltantes = [];
+      let alguno = false;
+      for (const t of sueltos) {
+        try {
+          await API.crearEjercicio({ nombre:t.nombre, musculo:t.musculo, categoria:t.categoria,
+            descansoSeg:t.descansoSeg, urlImagen:t.urlImagen || "" });
+          alguno = true;
+        } catch (e) { faltantes.push(t); }
+      }
+      guardaLocal(K_NUEVOS, faltantes); setNuevosEj(faltantes);
+      if (alguno) { mostrarAviso("Ejercicios pendientes agregados al catálogo."); cargar(true, false, true); }
+    }
   };
 
   useEffect(() => { if (estado === "listo") sincronizar(); }, [estado]);
@@ -1129,7 +1156,9 @@ function App() {
   };
 
   /* --- catálogo ---------------------------------------------------------- */
-  const crearEjercicio = async def => {
+  // permitirTemporal: solo dentro de un entrenamiento. Una plantilla NUNCA puede
+  // apuntar a un ID provisorio, porque queda escrito en la hoja sin respaldo.
+  const crearEjercicio = async (def, permitirTemporal) => {
     const base = { nombre: def.nombre, musculo: def.musculo, categoria: def.categoria,
                    descansoSeg: def.descansoSeg, urlImagen: def.urlImagen || "" };
     setCreandoEj(true);
@@ -1140,7 +1169,11 @@ function App() {
       mostrarAviso("Ejercicio guardado en el catálogo.");
       return r.ejercicio;
     } catch (e) {
-      // Sin señal: se usa un ID temporal y la hoja lo bautiza al sincronizar.
+      if (permitirTemporal === false) {
+        mostrarAviso("No se pudo crear el ejercicio: " + (e.message || "revisa la conexión"));
+        throw e;
+      }
+      // Entrenando sin señal: ID provisorio, la hoja lo bautiza al sincronizar.
       const temp = Object.assign({ id: "TMP-" + Date.now().toString(36) }, base);
       const q = nuevosEj.concat([temp]);
       setNuevosEj(q); guardaLocal(K_NUEVOS, q);
